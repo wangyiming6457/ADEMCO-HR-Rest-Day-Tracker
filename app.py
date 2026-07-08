@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
 import io
-from datetime import date, timedelta  # Added to handle date calculations
+from datetime import date, timedelta
 
 # ==========================================
-# CORE LOGIC (Untouched)
+# CORE LOGIC (Updated with "Active Streak" rule)
 # ==========================================
 def analyze_rest_days(df):
     """Processes the dataframe to find consecutive working days >= 7"""
@@ -19,6 +19,9 @@ def analyze_rest_days(df):
     df['Name'] = df['Name'].astype(str).str.strip().str.upper()
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.normalize()
     df = df.dropna(subset=['Date'])
+    
+    # Identify the absolute latest date in the entire uploaded dataset
+    max_dataset_date = df['Date'].max()
 
     df = df.drop_duplicates(subset=['Name', 'Date'])
     df = df.sort_values(by=['Name', 'Date'])
@@ -33,7 +36,12 @@ def analyze_rest_days(df):
         End_Date=('Date', 'max')
     ).reset_index()
 
+    # Filter 1: Must be 7 or more consecutive days
     flagged = summary[summary['Consecutive_Days'] >= 7].copy()
+    
+    # Filter 2: NEW RULE - The streak must be currently active (ends on the last day of the dataset)
+    if not flagged.empty:
+        flagged = flagged[flagged['End_Date'] == max_dataset_date]
     
     if not flagged.empty:
         def set_alert(days):
@@ -73,7 +81,7 @@ st.caption("🔒 **Data Privacy:** This tool processes data strictly in-memory. 
 
 # Dynamic Date Calculation for HR Instructions
 two_weeks_ago = date.today() - timedelta(days=14)
-target_date_str = two_weeks_ago.strftime("%d %B %Y")  # Formats as "DD Month YYYY"
+target_date_str = two_weeks_ago.strftime("%d %B %Y")
 
 # Crucial Instructions for HR with dynamic date
 st.info(f"💡 **Important Note:** To ensure the app does not miss out on workers who are already on a streak, please upload data starting from at least **{target_date_str}** (2 weeks before today).")
@@ -97,7 +105,7 @@ if uploaded_file:
             
             if not results.empty:
                 st.subheader("Action Required: Flagged Personnel")
-                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit.")
+                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit. (Note: Officers who have already taken a rest day are excluded from this alert list).")
                 
                 # Apply the highlight styling to the dataframe
                 styled_results = results.style.apply(highlight_breaches, axis=1)
@@ -118,7 +126,7 @@ if uploaded_file:
                     type="primary"
                 )
             else:
-                st.success("✅ **All Clear!** No security officers have worked 7 or more consecutive days in this dataset.")
+                st.success("✅ **All Clear!** No security officers have an active streak of 7 or more consecutive days in this dataset.")
                 
         except Exception as e:
             st.error(f"An error occurred while analyzing the file: {e}")
