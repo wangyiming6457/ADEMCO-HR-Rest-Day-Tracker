@@ -94,3 +94,58 @@ def highlight_breaches(row):
 # ==========================================
 # STREAMLIT UI
 # ==========================================
+st.set_page_config(page_title="ADEMCO HR Rest Day Tracker", page_icon="🏢", layout="wide")
+
+# ADEMCO Branding and Header
+st.markdown("### 🏢 ADEMCO | HR Operations")
+st.title("Security Officer Rest Day Tracker")
+
+# Privacy Note for Peace of Mind
+st.caption("🔒 **Data Privacy:** This tool processes data strictly in-memory. No employee files or records are saved or stored. All data is wiped the moment you close this page.")
+
+# Dynamic Date Calculation for HR Instructions
+two_weeks_ago = date.today() - timedelta(days=14)
+target_date_str = two_weeks_ago.strftime("%d %B %Y")
+
+# Crucial Instructions for HR with dynamic date
+st.info(f"💡 **Important Note:** To ensure the app does not miss out on workers who are already on a streak, please upload data starting from at least **{target_date_str}** (2 weeks before today).")
+
+st.markdown("---")
+
+# File Uploader
+uploaded_file = st.file_uploader("Upload Attendance Export (CSV or Excel)", type=["csv", "xlsx"])
+
+if uploaded_file:
+    with st.spinner("Analyzing personnel shifts..."):
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                raw_data = pd.read_csv(uploaded_file)
+            else:
+                raw_data = pd.read_excel(uploaded_file)
+                
+            results = analyze_rest_days(raw_data)
+            
+            if not results.empty:
+                st.subheader("Action Required: Flagged Personnel")
+                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit. *(Note: Officers who are already on a rest day are excluded from this list).*")
+                
+                styled_results = results.style.apply(highlight_breaches, axis=1)
+                
+                st.dataframe(styled_results, use_container_width=True, hide_index=True)
+                
+                st.markdown("---")
+                csv_buffer = io.StringIO()
+                results.to_csv(csv_buffer, index=False)
+                
+                st.download_button(
+                    label="📥 Download Action List (CSV)",
+                    data=csv_buffer.getvalue(),
+                    file_name="ADEMCO_Rest_Day_Alerts.csv",
+                    mime="text/csv",
+                    type="primary"
+                )
+            else:
+                st.success("✅ **All Clear!** No security officers have an active streak of 7 or more consecutive days in this dataset.")
+                
+        except Exception as e:
+            st.error(f"An error occurred while analyzing the file: {e}")
