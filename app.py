@@ -4,7 +4,7 @@ import io
 from datetime import date, timedelta
 
 # ==========================================
-# CORE LOGIC (Updated with "Active Streak" rule)
+# CORE LOGIC (Updated with 1-Day Night Shift Buffer)
 # ==========================================
 def analyze_rest_days(df):
     """Processes the dataframe to find consecutive working days >= 7"""
@@ -39,9 +39,11 @@ def analyze_rest_days(df):
     # Filter 1: Must be 7 or more consecutive days
     flagged = summary[summary['Consecutive_Days'] >= 7].copy()
     
-    # Filter 2: NEW RULE - The streak must be currently active (ends on the last day of the dataset)
+    # Filter 2: The streak must end on the max date OR the day before (to catch night shifts!)
     if not flagged.empty:
-        flagged = flagged[flagged['End_Date'] == max_dataset_date]
+        # We subtract 1 day from the max date to create our cutoff
+        cutoff_date = max_dataset_date - pd.Timedelta(days=1)
+        flagged = flagged[flagged['End_Date'] >= cutoff_date]
     
     if not flagged.empty:
         def set_alert(days):
@@ -105,7 +107,7 @@ if uploaded_file:
             
             if not results.empty:
                 st.subheader("Action Required: Flagged Personnel")
-                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit. (Note: Officers who have already taken a rest day are excluded from this alert list).")
+                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit. *(Note: Officers who are already on a rest day are excluded from this list).*")
                 
                 # Apply the highlight styling to the dataframe
                 styled_results = results.style.apply(highlight_breaches, axis=1)
