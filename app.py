@@ -4,7 +4,7 @@ import io
 from datetime import date, timedelta
 
 # ==========================================
-# CORE LOGIC
+# CORE LOGIC (Updated with Precise Physical Out-Time Filter)
 # ==========================================
 def analyze_rest_days(df):
     """Processes the dataframe to find consecutive working days >= 7"""
@@ -22,23 +22,19 @@ def analyze_rest_days(df):
     df['Name'] = df['Name'].astype(str).str.strip().str.upper()
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.normalize()
     
-    # -------------------------------------------------------------
-    # NEW FILTER: Clean out accidental taps (Ghost Shifts)
-    # -------------------------------------------------------------
-    # Parse In Time and Out Time as actual time objects to calculate duration
+    # NEW: Extract the exact calendar date they physically left the site
+    df['Out_Date'] = pd.to_datetime(df['Out Time'], errors='coerce').dt.normalize()
+    
+    df = df.dropna(subset=['Date', 'Out_Date'])
+    
+    # Clean out accidental short taps (< 15 mins)
     t_in = pd.to_datetime(df['In Time'], errors='coerce')
     t_out = pd.to_datetime(df['Out Time'], errors='coerce')
-    
-    # Calculate the total duration of the shift in minutes
     shift_duration_minutes = (t_out - t_in).dt.total_seconds() / 60.0
-    
-    # Keep ONLY rows where the shift lasted 15 minutes or more.
-    # This completely deletes 1-minute accidental card taps from the record.
     df = df[shift_duration_minutes >= 15].copy()
-    # -------------------------------------------------------------
-
-    df = df.dropna(subset=['Date'])
-    max_dataset_date = df['Date'].max()
+    
+    # Identify the absolute latest physical date anyone worked in the entire dataset (e.g., July 10)
+    max_physical_date = df['Out_Date'].max()
 
     df = df.drop_duplicates(subset=['Name', 'Date'])
     df = df.sort_values(by=['Name', 'Date'])
@@ -51,16 +47,17 @@ def analyze_rest_days(df):
     # Summarize the streaks
     summary = df.groupby(['Name', 'Streak_ID']).agg(
         Consecutive_Days=('Date', 'count'),
-        Last_Shift_Date=('Date', 'max'),
+        Last_Physical_Date=('Out_Date', 'last'), # Tracks the exact calendar day they finished their last shift
         Start_Time=('In Time', 'first'),
         End_Time=('Out Time', 'last')
     ).reset_index()
 
+    # Filter 1: Must be 7 or more consecutive days
     flagged = summary[summary['Consecutive_Days'] >= 7].copy()
     
+    # Filter 2: NEW PRECISION RULE - The guard must have physically worked/clocked out on the final day of the report
     if not flagged.empty:
-        cutoff_date = max_dataset_date - pd.Timedelta(days=1)
-        flagged = flagged[flagged['Last_Shift_Date'] >= cutoff_date]
+        flagged = flagged[flagged['Last_Physical_Date'] == max_physical_date]
     
     if not flagged.empty:
         def set_alert(days):
@@ -72,7 +69,7 @@ def analyze_rest_days(df):
                 return "⚠️ Warning (7-10 Days)"
                 
         flagged['Alert_Status'] = flagged['Consecutive_Days'].apply(set_alert)
-        flagged = flagged.drop(columns=['Streak_ID', 'Last_Shift_Date'])
+        flagged = flagged.drop(columns=['Streak_ID', 'Last_Physical_Date'])
         
         flagged = flagged.rename(columns={
             'Start_Time': 'First Shift (In Time)',
@@ -123,7 +120,7 @@ if uploaded_file:
             
             if not results.empty:
                 st.subheader("Action Required: Flagged Personnel")
-                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit. *(Note: Short accidental taps < 15 minutes are automatically ignored).*")
+                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit. *(Note: Officers who have already finished their shifts yesterday and are currently resting are excluded).*")
                 
                 styled_results = results.style.apply(highlight_breaches, axis=1)
                 st.dataframe(styled_results, use_container_width=True, hide_index=True)
