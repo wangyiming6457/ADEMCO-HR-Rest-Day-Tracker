@@ -4,35 +4,42 @@ import io
 from datetime import date, timedelta
 
 # ==========================================
-# CORE LOGIC 
+# CORE LOGIC
 # ==========================================
 def analyze_rest_days(df):
     """Processes the dataframe to find consecutive working days >= 7"""
     df.columns = df.columns.str.strip()
     
-    # Updated to require In Time and Out Time columns
     required_cols = ['Name', 'Date', 'In Time', 'Out Time']
     if not all(col in df.columns for col in required_cols):
         st.error(f"❌ Error: Could not find all required columns ({', '.join(required_cols)}). Please check your file.")
         return pd.DataFrame()
 
-    # Keep only the columns we need
     df = df[required_cols].copy()
-    
-    # Drop rows where Name or Date is missing
-    df = df.dropna(subset=['Name', 'Date'])
+    df = df.dropna(subset=['Name', 'Date', 'In Time', 'Out Time'])
     
     # Standardize formats
     df['Name'] = df['Name'].astype(str).str.strip().str.upper()
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.normalize()
     
-    # Drop rows with invalid dates
-    df = df.dropna(subset=['Date'])
+    # -------------------------------------------------------------
+    # NEW FILTER: Clean out accidental taps (Ghost Shifts)
+    # -------------------------------------------------------------
+    # Parse In Time and Out Time as actual time objects to calculate duration
+    t_in = pd.to_datetime(df['In Time'], errors='coerce')
+    t_out = pd.to_datetime(df['Out Time'], errors='coerce')
     
-    # Identify the absolute latest date in the entire uploaded dataset for our cutoff rule
+    # Calculate the total duration of the shift in minutes
+    shift_duration_minutes = (t_out - t_in).dt.total_seconds() / 60.0
+    
+    # Keep ONLY rows where the shift lasted 15 minutes or more.
+    # This completely deletes 1-minute accidental card taps from the record.
+    df = df[shift_duration_minutes >= 15].copy()
+    # -------------------------------------------------------------
+
+    df = df.dropna(subset=['Date'])
     max_dataset_date = df['Date'].max()
 
-    # Drop duplicate shift days and sort chronologically
     df = df.drop_duplicates(subset=['Name', 'Date'])
     df = df.sort_values(by=['Name', 'Date'])
 
@@ -41,18 +48,16 @@ def analyze_rest_days(df):
     df['New_Streak'] = df['Date_Diff'] != 1
     df['Streak_ID'] = df.groupby('Name')['New_Streak'].cumsum()
 
-    # Summarize the streaks (Now pulling exact In/Out times)
+    # Summarize the streaks
     summary = df.groupby(['Name', 'Streak_ID']).agg(
         Consecutive_Days=('Date', 'count'),
-        Last_Shift_Date=('Date', 'max'),       # Kept temporarily for the cutoff math
-        Start_Time=('In Time', 'first'),       # The 'In Time' of the first shift in the streak
-        End_Time=('Out Time', 'last')          # The 'Out Time' of the last shift in the streak
+        Last_Shift_Date=('Date', 'max'),
+        Start_Time=('In Time', 'first'),
+        End_Time=('Out Time', 'last')
     ).reset_index()
 
-    # Filter 1: Must be 7 or more consecutive days
     flagged = summary[summary['Consecutive_Days'] >= 7].copy()
     
-    # Filter 2: The streak must end on the max date OR the day before (to catch night shifts!)
     if not flagged.empty:
         cutoff_date = max_dataset_date - pd.Timedelta(days=1)
         flagged = flagged[flagged['Last_Shift_Date'] >= cutoff_date]
@@ -67,17 +72,13 @@ def analyze_rest_days(df):
                 return "⚠️ Warning (7-10 Days)"
                 
         flagged['Alert_Status'] = flagged['Consecutive_Days'].apply(set_alert)
-        
-        # Clean up the output table by dropping the background calculation columns
         flagged = flagged.drop(columns=['Streak_ID', 'Last_Shift_Date'])
         
-        # Rename columns to look nice for HR
         flagged = flagged.rename(columns={
             'Start_Time': 'First Shift (In Time)',
             'End_Time': 'Last Shift (Out Time)'
         })
         
-        # Sort by worst offenders first
         flagged = flagged.sort_values(by='Consecutive_Days', ascending=False)
         
     return flagged
@@ -96,23 +97,18 @@ def highlight_breaches(row):
 # ==========================================
 st.set_page_config(page_title="ADEMCO HR Rest Day Tracker", page_icon="🏢", layout="wide")
 
-# ADEMCO Branding and Header
 st.markdown("### 🏢 ADEMCO | HR Operations")
 st.title("Security Officer Rest Day Tracker")
 
-# Privacy Note for Peace of Mind
 st.caption("🔒 **Data Privacy:** This tool processes data strictly in-memory. No employee files or records are saved or stored. All data is wiped the moment you close this page.")
 
-# Dynamic Date Calculation for HR Instructions
 two_weeks_ago = date.today() - timedelta(days=14)
 target_date_str = two_weeks_ago.strftime("%d %B %Y")
 
-# Crucial Instructions for HR with dynamic date
 st.info(f"💡 **Important Note:** To ensure the app does not miss out on workers who are already on a streak, please upload data starting from at least **{target_date_str}** (2 weeks before today).")
 
 st.markdown("---")
 
-# File Uploader
 uploaded_file = st.file_uploader("Upload Attendance Export (CSV or Excel)", type=["csv", "xlsx"])
 
 if uploaded_file:
@@ -127,10 +123,9 @@ if uploaded_file:
             
             if not results.empty:
                 st.subheader("Action Required: Flagged Personnel")
-                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit. *(Note: Officers who are already on a rest day are excluded from this list).*")
+                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit. *(Note: Short accidental taps < 15 minutes are automatically ignored).*")
                 
                 styled_results = results.style.apply(highlight_breaches, axis=1)
-                
                 st.dataframe(styled_results, use_container_width=True, hide_index=True)
                 
                 st.markdown("---")
