@@ -120,7 +120,7 @@ if uploaded_file:
             
             if not results.empty:
                 st.subheader("Action Required: Flagged Personnel")
-                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit. *(Note: Officers who have already finished their shifts yesterday and are currently resting are excluded).*")
+                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit.")
                 
                 styled_results = results.style.apply(highlight_breaches, axis=1)
                 st.dataframe(styled_results, use_container_width=True, hide_index=True)
