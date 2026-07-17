@@ -4,7 +4,7 @@ import io
 from datetime import date, timedelta
 
 # ==========================================
-# CORE LOGIC (Updated with Precise Physical Out-Time Filter)
+# CORE LOGIC 
 # ==========================================
 def analyze_rest_days(df):
     """Processes the dataframe to find consecutive working days >= 7"""
@@ -20,20 +20,23 @@ def analyze_rest_days(df):
     
     # Standardize formats
     df['Name'] = df['Name'].astype(str).str.strip().str.upper()
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.normalize()
     
-    # NEW: Extract the exact calendar date they physically left the site
-    df['Out_Date'] = pd.to_datetime(df['Out Time'], errors='coerce').dt.normalize()
+    # FIX: Added dayfirst=True to handle DD-MM-YYYY formats properly!
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce', dayfirst=True).dt.normalize()
+    
+    t_in = pd.to_datetime(df['In Time'], errors='coerce', dayfirst=True)
+    t_out = pd.to_datetime(df['Out Time'], errors='coerce', dayfirst=True)
+    
+    # Extract the exact calendar date they physically left the site
+    df['Out_Date'] = t_out.dt.normalize()
     
     df = df.dropna(subset=['Date', 'Out_Date'])
     
     # Clean out accidental short taps (< 15 mins)
-    t_in = pd.to_datetime(df['In Time'], errors='coerce')
-    t_out = pd.to_datetime(df['Out Time'], errors='coerce')
     shift_duration_minutes = (t_out - t_in).dt.total_seconds() / 60.0
     df = df[shift_duration_minutes >= 15].copy()
     
-    # Identify the absolute latest physical date anyone worked in the entire dataset (e.g., July 10)
+    # Identify the absolute latest physical date anyone worked in the entire dataset (now safely includes the 17th!)
     max_physical_date = df['Out_Date'].max()
 
     df = df.drop_duplicates(subset=['Name', 'Date'])
@@ -47,7 +50,7 @@ def analyze_rest_days(df):
     # Summarize the streaks
     summary = df.groupby(['Name', 'Streak_ID']).agg(
         Consecutive_Days=('Date', 'count'),
-        Last_Physical_Date=('Out_Date', 'last'), # Tracks the exact calendar day they finished their last shift
+        Last_Physical_Date=('Out_Date', 'last'), 
         Start_Time=('In Time', 'first'),
         End_Time=('Out Time', 'last')
     ).reset_index()
@@ -55,7 +58,7 @@ def analyze_rest_days(df):
     # Filter 1: Must be 7 or more consecutive days
     flagged = summary[summary['Consecutive_Days'] >= 7].copy()
     
-    # Filter 2: NEW PRECISION RULE - The guard must have physically worked/clocked out on the final day of the report
+    # Filter 2: The guard must have physically worked/clocked out on the final day of the report
     if not flagged.empty:
         flagged = flagged[flagged['Last_Physical_Date'] == max_physical_date]
     
@@ -120,7 +123,7 @@ if uploaded_file:
             
             if not results.empty:
                 st.subheader("Action Required: Flagged Personnel")
-                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit.")
+                st.markdown("Officers highlighted in **red** have exceeded the legal 12-day limit. *(Note: Officers who have already finished their shifts yesterday and are currently resting are excluded).*")
                 
                 styled_results = results.style.apply(highlight_breaches, axis=1)
                 st.dataframe(styled_results, use_container_width=True, hide_index=True)
