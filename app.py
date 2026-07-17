@@ -21,22 +21,25 @@ def analyze_rest_days(df):
     # Standardize formats
     df['Name'] = df['Name'].astype(str).str.strip().str.upper()
     
-    # FIX: Added dayfirst=True to handle DD-MM-YYYY formats properly!
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce', dayfirst=True).dt.normalize()
+    # THE FIX: 
+    # 1. Date column is YYYY-MM-DD, so we parse it normally without dayfirst.
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.normalize()
     
+    # 2. In Time and Out Time are DD-MM-YYYY, so we MUST use dayfirst=True here!
     t_in = pd.to_datetime(df['In Time'], errors='coerce', dayfirst=True)
     t_out = pd.to_datetime(df['Out Time'], errors='coerce', dayfirst=True)
     
     # Extract the exact calendar date they physically left the site
     df['Out_Date'] = t_out.dt.normalize()
     
+    # Drop rows where date parsing completely failed
     df = df.dropna(subset=['Date', 'Out_Date'])
     
     # Clean out accidental short taps (< 15 mins)
     shift_duration_minutes = (t_out - t_in).dt.total_seconds() / 60.0
     df = df[shift_duration_minutes >= 15].copy()
     
-    # Identify the absolute latest physical date anyone worked in the entire dataset (now safely includes the 17th!)
+    # Identify the absolute latest physical date anyone worked in the entire dataset
     max_physical_date = df['Out_Date'].max()
 
     df = df.drop_duplicates(subset=['Name', 'Date'])
